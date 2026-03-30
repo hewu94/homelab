@@ -1,0 +1,135 @@
+# Nextcloud AI Platform — GPU VM Docker Compose
+# Deploy to: /opt/ai-platform/docker-compose.yml
+#
+# Usage:
+#   docker compose up -d
+#   docker exec ollama ollama pull llama3.1:8b
+#
+# Prerequisites:
+#   - NVIDIA Container Toolkit installed
+#   - env/ directory with nc1.env through nc4.env
+#   - GPU passthrough verified: docker run --rm --gpus all nvidia/cuda:12.2.2-runtime-ubuntu22.04 nvidia-smi
+
+services:
+  # ═══ SHARED: Ollama LLM ═══
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ═══ SHARED: LocalAI (Whisper STT + optional Piper TTS) ═══
+  # Provides OpenAI-compatible /v1/audio/transcriptions endpoint
+  # (onerahmet/openai-whisper-asr-webservice uses /asr which is NOT compatible with integration_openai)
+  localai:
+    image: localai/localai:latest-gpu-nvidia-cuda-12
+    container_name: localai
+    restart: unless-stopped
+    ports:
+      - "8300:8080"
+    environment:
+      - THREADS=4
+    volumes:
+      - localai_models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ═══ PER-INSTANCE: Context Chat Backend ×4 ═══
+  # Each container runs 3 processes via supervisord:
+  #   1. main.py       — FastAPI app on APP_PORT
+  #   2. main_em.py    — Embedding server on internal :5000
+  #   3. PostgreSQL     — pgvector for document embeddings
+  #
+  # The CCB uses nc_texttotext LLM mode: it calls back to Nextcloud's
+  # Task Processing API, which routes to integration_openai → Ollama.
+
+  context-chat-nc1:
+    image: ghcr.io/nextcloud/context_chat_backend:5.3.0
+    container_name: nc_app_context_chat_backend_nc1
+    restart: unless-stopped
+    ports:
+      - "10034:10034"
+    env_file: ./env/nc1.env
+    volumes:
+      - ccb_nc1_data:/nc_app_context_chat_backend_data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  context-chat-nc2:
+    image: ghcr.io/nextcloud/context_chat_backend:5.3.0
+    container_name: nc_app_context_chat_backend_nc2
+    restart: unless-stopped
+    ports:
+      - "10035:10034"
+    env_file: ./env/nc2.env
+    volumes:
+      - ccb_nc2_data:/nc_app_context_chat_backend_data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  context-chat-nc3:
+    image: ghcr.io/nextcloud/context_chat_backend:5.3.0
+    container_name: nc_app_context_chat_backend_nc3
+    restart: unless-stopped
+    ports:
+      - "10036:10034"
+    env_file: ./env/nc3.env
+    volumes:
+      - ccb_nc3_data:/nc_app_context_chat_backend_data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  context-chat-nc4:
+    image: ghcr.io/nextcloud/context_chat_backend:5.3.0
+    container_name: nc_app_context_chat_backend_nc4
+    restart: unless-stopped
+    ports:
+      - "10037:10034"
+    env_file: ./env/nc4.env
+    volumes:
+      - ccb_nc4_data:/nc_app_context_chat_backend_data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  ollama_data:
+  localai_models:
+  ccb_nc1_data:
+  ccb_nc2_data:
+  ccb_nc3_data:
+  ccb_nc4_data:

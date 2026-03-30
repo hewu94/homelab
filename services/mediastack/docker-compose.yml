@@ -1,0 +1,191 @@
+networks:
+  mediastack:
+    name: mediastack
+    driver: bridge
+
+services:
+
+  ##
+  ## Gluetun — VPN tunnel for download clients
+  ## https://github.com/qdm12/gluetun-wiki
+  ##
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: gluetun
+    restart: always
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      - "8888:8888/tcp"                   # HTTP proxy
+      - "${SABNZBD_PORT:-8080}:8080"      # SABnzbd WebUI (routed through gluetun)
+    volumes:
+      - ${DATA_DIR}/gluetun:/gluetun
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER}
+      - VPN_TYPE=${VPN_TYPE:-openvpn}
+      - OPENVPN_USER=${VPN_USERNAME}
+      - OPENVPN_PASSWORD=${VPN_PASSWORD}
+      - SERVER_COUNTRIES=${VPN_SERVER_COUNTRIES:-}
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY:-}
+      - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES:-}
+      - FIREWALL_OUTBOUND_SUBNETS=${LOCAL_SUBNET}
+      - HTTPPROXY=on
+    networks:
+      - mediastack
+
+  ##
+  ## Plex — Media Server
+  ## https://hub.docker.com/r/linuxserver/plex
+  ##
+  plex:
+    image: lscr.io/linuxserver/plex:latest
+    container_name: plex
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ${DATA_DIR}/plex:/config
+      - ${MEDIA_DIR}/media:/data/media
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - VERSION=docker
+      - PLEX_CLAIM=${PLEX_CLAIM:-}
+
+  ##
+  ## Sonarr — TV Show Library Manager
+  ## https://docs.linuxserver.io/images/docker-sonarr
+  ##
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    restart: unless-stopped
+    ports:
+      - "8989:8989"
+    volumes:
+      - ${DATA_DIR}/sonarr:/config
+      - ${MEDIA_DIR}:/data
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    networks:
+      - mediastack
+
+  ##
+  ## Radarr — Movie Library Manager
+  ## https://docs.linuxserver.io/images/docker-radarr
+  ##
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    restart: unless-stopped
+    ports:
+      - "7878:7878"
+    volumes:
+      - ${DATA_DIR}/radarr:/config
+      - ${MEDIA_DIR}:/data
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    networks:
+      - mediastack
+
+  ##
+  ## Prowlarr — Indexer Manager
+  ## https://docs.linuxserver.io/images/docker-prowlarr
+  ##
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    restart: unless-stopped
+    ports:
+      - "9696:9696"
+    volumes:
+      - ${DATA_DIR}/prowlarr:/config
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    networks:
+      - mediastack
+
+  ##
+  ## SABnzbd — Usenet Download Client (routed through Gluetun VPN)
+  ## https://docs.linuxserver.io/images/docker-sabnzbd
+  ##
+  sabnzbd:
+    image: lscr.io/linuxserver/sabnzbd:latest
+    container_name: sabnzbd
+    restart: unless-stopped
+    depends_on:
+      gluetun:
+        condition: service_healthy
+        restart: true
+    network_mode: "service:gluetun"
+    volumes:
+      - ${DATA_DIR}/sabnzbd:/config
+      - ${MEDIA_DIR}:/data
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+
+  ##
+  ## Bazarr — Subtitle Manager
+  ## https://docs.linuxserver.io/images/docker-bazarr
+  ##
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:latest
+    container_name: bazarr
+    restart: unless-stopped
+    ports:
+      - "6767:6767"
+    volumes:
+      - ${DATA_DIR}/bazarr:/config
+      - ${MEDIA_DIR}:/data
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    networks:
+      - mediastack
+
+  ##
+  ## Overseerr — Media Request UI
+  ## https://docs.linuxserver.io/images/docker-overseerr
+  ##
+  overseerr:
+    image: lscr.io/linuxserver/overseerr:latest
+    container_name: overseerr
+    restart: unless-stopped
+    ports:
+      - "5055:5055"
+    volumes:
+      - ${DATA_DIR}/overseerr:/config
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    networks:
+      - mediastack
+
+  ##
+  ## Flaresolverr — Cloudflare bypass for Prowlarr
+  ## https://github.com/FlareSolverr/FlareSolverr
+  ##
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=info
+      - TZ=${TZ}
+    networks:
+      - mediastack
