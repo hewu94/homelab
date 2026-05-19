@@ -1,7 +1,7 @@
 # Nextcloud AI Platform — Step-by-Step Setup Guide
 
 > Based on actual deployment to the homelab on 2026-03-30.
-> Tested with Nextcloud 32.0.6, CCB 5.3.0, Ollama, GTX 1070 8 GiB.
+> Tested with Nextcloud 32.0.6, CCB 5.3.0, Ollama, NVIDIA Tesla P40 24 GiB.
 
 ---
 
@@ -10,6 +10,7 @@
 | Component | Host | IP | Port |
 |---|---|---|---|
 | Ollama (shared LLM) | VM 120 (aiplatform) | 192.168.1.120 | 11434 |
+| Open WebUI (chat UI) | VM 120 | 192.168.1.120 | 3000 |
 | CCB for NC1 (DPSG) | VM 120 | 192.168.1.120 | 10034 |
 | CCB for NC2 (Wueblu) | VM 120 | 192.168.1.120 | 10035 |
 | CCB for NC3 (Test) | VM 120 | 192.168.1.120 | 10036 |
@@ -38,11 +39,25 @@ cd ~/ai-plattform
 docker compose up -d ollama
 ```
 
-### 1.3 Pull a model
+### 1.3 Pull models
+
+Four models cover all use cases (chat, Home Assistant agent, personal agent, coding agent):
 
 ```bash
-docker exec ollama ollama pull llama3.1:8b
+docker exec ollama ollama pull llama3.1:8b          # Chat (~4.7 GB, ~6 GB VRAM)
+docker exec ollama ollama pull mistral:7b            # Home Assistant agent (~4.1 GB, ~5 GB VRAM)
+docker exec ollama ollama pull qwen2.5:14b           # Personal agent (~9 GB, ~11 GB VRAM)
+docker exec ollama ollama pull qwen2.5-coder:14b     # Coding agent (~9 GB, ~11 GB VRAM)
 ```
+
+| Model | Use Case | Why This Model |
+|---|---|---|
+| `llama3.1:8b` | Nextcloud Assistant / general chat | Fast, great all-rounder |
+| `mistral:7b` | Home Assistant conversation agent | Reliable structured/JSON output for HA service calls |
+| `qwen2.5:14b` | Personal agent, planning, summarization | Best reasoning at 14B, strong German |
+| `qwen2.5-coder:14b` | Code generation, debugging | Purpose-built for code |
+
+> **VRAM note:** P40 has 24 GB. Ollama loads/unloads dynamically (max 2 models concurrently by default). All 4 models are stored on disk but only active ones use VRAM.
 
 ### 1.4 Verify Ollama
 
@@ -50,7 +65,7 @@ docker exec ollama ollama pull llama3.1:8b
 curl http://localhost:11434/api/tags
 ```
 
-Expected: JSON listing `llama3.1:8b`.
+Expected: JSON listing `llama3.1:8b`, `mistral:7b`, `qwen2.5:14b`, `qwen2.5-coder:14b`.
 
 ---
 
@@ -159,6 +174,9 @@ In the Nextcloud web UI:
    - **Service URL**: `http://192.168.1.120:11434`
    - Check **Use Ollama-specific features**
    - **Default completion model**: `llama3.1:8b`
+
+   > Other models (`mistral:7b`, `qwen2.5:14b`, `qwen2.5-coder:14b`) are also available via the Ollama endpoint but the default for Nextcloud text generation should be `llama3.1:8b` for speed.
+
 3. Save
 
 This provides the Text2Text task provider that Context Chat uses for LLM queries.
@@ -304,8 +322,44 @@ nvidia-smi
 
 Expected VRAM usage:
 - Ollama (llama3.1:8b): ~5.3 GiB
+- Ollama (mistral:7b, if loaded): ~4.5 GiB
+- Ollama (qwen2.5:14b, if loaded): ~10.5 GiB
 - Each CCB embedding server: ~322 MiB
-- Total with 1 CCB: ~5.6 GiB / 8 GiB
+- Total with 1 CCB + chat model: ~5.6 GiB / 24 GiB
+
+---
+
+## Phase 9 — Configure Home Assistant Agent
+
+Connect the Home Assistant VM to Ollama for a smart home conversation agent.
+
+### 9.1 Add the Ollama integration in Home Assistant
+
+1. Go to **Settings → Devices & Services → Add Integration → Ollama**
+2. Set URL: `http://192.168.1.120:11434`
+3. Select model: `mistral:7b`
+
+### 9.2 Configure the system prompt
+
+In the Ollama integration options, set the system prompt:
+
+```
+You are a home automation assistant. You control a smart home via Home Assistant.
+Available areas: Living Room, Kitchen, Bedroom, Office, Garden.
+Available device types: lights, switches, climate, covers, media players.
+When the user asks to control a device, respond with the appropriate service call.
+Always confirm what action you took.
+```
+
+### 9.3 Assign as conversation agent
+
+1. Go to **Settings → Voice assistants**
+2. Create or edit an assistant
+3. Set the conversation agent to the Ollama integration
+
+### 9.4 Verify
+
+Open the Home Assistant chat and say "Turn on the living room lights". The agent should respond with the appropriate action.
 
 ---
 
@@ -337,5 +391,6 @@ Expected VRAM usage:
 - Subsequent changes are picked up automatically if cron is running
 
 ### VRAM not enough to run all 4 CCBs
-- Use `CC_EM_BASE_URL` in the .env for instances 2-4 to share a single embedding server
+- With the P40 (24 GiB) there is enough VRAM to run all 4 CCBs with their own embedding server
+- If needed, use `CC_EM_BASE_URL` in the .env for instances 2-4 to share a single embedding server
 - This reduces per-instance VRAM from ~322 MiB to near zero for embedding

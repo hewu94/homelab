@@ -23,15 +23,15 @@ set -euo pipefail
 # CONFIGURATION — UPDATE THESE VALUES BEFORE RUNNING
 # ════════════════════════════════════════════════════════════════
 
-GPU_VM_IP="CHANGE_ME"  # IP address of your GPU VM
+GPU_VM_IP="192.168.1.120"  # IP address of your GPU VM
 
 # Nextcloud instance URLs (must match NEXTCLOUD_URL in env files)
 NC_URLS=(
   ""  # placeholder for index 0
-  "https://nc1.yourdomain.com"
-  "https://nc2.yourdomain.com"
-  "https://nc3.yourdomain.com"
-  "https://nc4.yourdomain.com"
+  "https://cloud.dpsg-bruenninghausen.de"
+  "https://cloud.wueblu.de"
+  "https://test.dpsg-bruenninghausen.de"
+  "https://vogt-cloud.de"
 )
 
 # APP_SECRET values — MUST match those in env/nc{1..4}.env

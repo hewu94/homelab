@@ -116,27 +116,64 @@ volumes:
   ollama_data:
 ```
 
-### Step 1.2: Start and pull a model
+### Step 1.2: Start and pull models
 
 ```bash
 cd /opt/ai-platform
 docker compose -f docker-compose.ollama.yml up -d
 
-# Pull a model (choose based on your VRAM)
-# ~6 GB VRAM:
-docker exec ollama ollama pull llama3.1:8b
-# ~12 GB VRAM:
-docker exec ollama ollama pull llama3.1:8b-instruct-q8_0
+# Pull all models (P40 has 24 GB VRAM — Ollama loads/unloads dynamically)
+docker exec ollama ollama pull llama3.1:8b          # Chat (~4.7 GB, ~6 GB VRAM)
+docker exec ollama ollama pull mistral:7b            # Home Assistant agent (~4.1 GB, ~5 GB VRAM)
+docker exec ollama ollama pull qwen2.5:14b           # Personal agent (~9 GB, ~11 GB VRAM)
+docker exec ollama ollama pull qwen2.5-coder:14b     # Coding agent (~9 GB, ~11 GB VRAM)
 ```
+
+#### Model Selection Rationale
+
+| Use Case | Model | Size | VRAM | Why |
+|---|---|---|---|---|
+| **General chat** | `llama3.1:8b` | ~4.7 GB | ~6 GB | Fast, great all-rounder for Nextcloud Assistant |
+| **Home Assistant agent** | `mistral:7b` | ~4.1 GB | ~5 GB | Excellent instruction-following, reliable structured/JSON output for HA service calls |
+| **Personal agent** | `qwen2.5:14b` | ~9 GB | ~11 GB | Best reasoning at 14B, strong multilingual (German), good for planning/summarizing |
+| **Coding agent** | `qwen2.5-coder:14b` | ~9 GB | ~11 GB | Purpose-built for code, outperforms CodeLlama and DeepSeek-Coder at this size |
+
+#### VRAM Budget (NVIDIA Tesla P40 — 24 GB)
+
+Ollama dynamically loads/unloads models. Configure via environment variables:
+
+```yaml
+environment:
+  - OLLAMA_KEEP_ALIVE=5m           # unload idle models after 5 min
+  - OLLAMA_NUM_PARALLEL=2           # max 2 concurrent requests per model
+  - OLLAMA_MAX_LOADED_MODELS=2      # max 2 models in VRAM simultaneously
+```
+
+| Scenario | Models in VRAM | VRAM Used | Fits? |
+|---|---|---|---|
+| Chat + HA agent | llama3.1:8b + mistral:7b | ~11 GB | ✅ + embeddings |
+| Personal agent solo | qwen2.5:14b | ~11 GB | ✅ + embeddings |
+| Coding agent solo | qwen2.5-coder:14b | ~11 GB | ✅ + embeddings |
+| Chat + Personal agent | llama3.1:8b + qwen2.5:14b | ~17 GB | ✅ tight |
+| Two 14B models | qwen2.5:14b + qwen2.5-coder:14b | ~22 GB | ⚠️ leaves ~2 GB for embeddings |
+
+> **Tip:** For a simpler setup, `qwen2.5:14b` alone can serve chat + personal + HA roles (3 roles, 1 model). Then only 2 models total are needed.
 
 ### Step 1.3: Verify
 
 ```bash
 curl http://localhost:11434/api/tags
-# Should list the pulled model
+# Should list: llama3.1:8b, mistral:7b, qwen2.5:14b, qwen2.5-coder:14b
+
+# Quick test with the chat model
 curl http://localhost:11434/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"llama3.1:8b","messages":[{"role":"user","content":"Hello"}]}'
+
+# Quick test with the coding model
+curl http://localhost:11434/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"qwen2.5-coder:14b","messages":[{"role":"user","content":"Write a Python hello world"}]}'
 ```
 
 ---
@@ -181,8 +218,8 @@ After starting, configure a Whisper model in LocalAI (it provides `/v1/audio/tra
 ### Step 2.2: Verify
 
 ```bash
-curl http://localhost:8300/v1/audio/transcriptions \
-  -F file=@test.wav -F model=whisper-1
+curl http://localhost:8300/models/apply -H "Content-Type: application/json" \
+  -d '{"url": "github:go-skynet/model-gallery/whisper-base.yaml", "name": "whisper-1"}'
 ```
 
 ---
@@ -387,7 +424,7 @@ On **each** NC instance, go to **Admin Settings → Artificial Intelligence → 
 |---|---|
 | Service type | **Ollama** |
 | Service URL | `http://<GPU_VM_IP>:11434` |
-| Model for text generation | `llama3.1:8b` (or whichever you pulled) |
+| Model for text generation | `llama3.1:8b` (general chat) or `qwen2.5:14b` (for richer reasoning) |
 | Whisper STT endpoint | `http://<GPU_VM_IP>:8300` (if using LocalAI for STT) |
 
 This provides:
@@ -511,6 +548,8 @@ See full docs: https://docs.nextcloud.com/server/latest/admin_manual/ai/overview
 
 Running 4 CCB instances each with their own embedding server is GPU-intensive. The embedding model (`multilingual-e5-large-instruct-q6_k.gguf`) uses ~2-3 GB VRAM per instance.
 
+> **Note:** With the NVIDIA Tesla P40 (24 GiB VRAM) there is sufficient headroom to run all 4 embedding servers + Ollama without optimization. This phase is optional.
+
 ### Option: Shared External Embedding Server
 
 From [`appinfo/info.xml`](https://github.com/nextcloud/context_chat_backend/blob/2debcb2b410befa4cffe977ae47fbe7c545646b0/appinfo/info.xml#L59-L62):
@@ -567,12 +606,18 @@ docker exec nc_app_context_chat_backend_nc1 ls /nc_app_context_chat_backend_data
 
 services:
   # ═══ SHARED: Ollama LLM ═══
+  # Models: llama3.1:8b (chat), mistral:7b (HA agent),
+  #         qwen2.5:14b (personal agent), qwen2.5-coder:14b (coding agent)
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
     restart: unless-stopped
     ports:
       - "11434:11434"
+    environment:
+      - OLLAMA_KEEP_ALIVE=5m
+      - OLLAMA_NUM_PARALLEL=2
+      - OLLAMA_MAX_LOADED_MODELS=2
     volumes:
       - ollama_data:/root/.ollama
     deploy:
@@ -705,3 +750,59 @@ volumes:
 | 6 | Whisper via `onerahmet` image is OpenAI-compatible | That image uses `/asr` endpoint, not `/v1/audio/transcriptions` | Use LocalAI instead for `integration_openai` compatibility |
 | 7 | LLM models: `nc_texttotext`, `llama`, `hugging_face`, `ctransformer` | Confirmed from [`models/loader.py` L11](https://github.com/nextcloud/context_chat_backend/blob/2debcb2b410befa4cffe977ae47fbe7c545646b0/context_chat_backend/models/loader.py#L11) | `nc_texttotext` is default and recommended for external LLM |
 | 8 | Nextcloud version requirement | **Nextcloud ≥ 32** required ([`info.xml` L32](https://github.com/nextcloud/context_chat_backend/blob/2debcb2b410befa4cffe977ae47fbe7c545646b0/appinfo/info.xml#L32)) | Must verify NC version first |
+
+---
+
+## Appendix D — Ollama Model Strategy
+
+### Loaded Models & Use-Case Mapping
+
+| Model | Primary Use Case | Accessed Via | Notes |
+|---|---|---|---|
+| `llama3.1:8b` | Nextcloud Assistant chat, Context Chat LLM | `integration_openai` → Ollama | Default model for NC text generation |
+| `mistral:7b` | Home Assistant conversation agent | HA Ollama integration → Ollama | Reliable JSON/structured output for service calls |
+| `qwen2.5:14b` | Personal agent, planning, summarization | Open WebUI / API | Strong multilingual (German), best reasoning at 14B |
+| `qwen2.5-coder:14b` | Code generation, debugging, review | Open WebUI / API | Purpose-built for code tasks |
+
+### Home Assistant Integration
+
+The Home Assistant VM (192.168.1.20) connects to Ollama on the GPU VM via the
+[Ollama Conversation integration](https://www.home-assistant.io/integrations/ollama/).
+
+**Configuration in Home Assistant:**
+
+1. Go to **Settings → Devices & Services → Add Integration → Ollama**
+2. Set the URL to `http://192.168.1.120:11434`
+3. Select model: `mistral:7b`
+4. Add a system prompt describing your smart home entities, e.g.:
+
+```
+You are a home automation assistant. You control a smart home via Home Assistant.
+Available areas: Living Room, Kitchen, Bedroom, Office, Garden.
+Available device types: lights, switches, climate, covers, media players.
+When the user asks to control a device, respond with the appropriate service call.
+Always confirm what action you took.
+```
+
+5. Go to **Settings → Voice assistants** and assign the Ollama agent as conversation agent
+
+**Network requirement:** Home Assistant VM (192.168.1.20) must reach GPU VM (192.168.1.120:11434).
+
+### Open WebUI Model Access
+
+Open WebUI (http://192.168.1.120:3000) automatically discovers all Ollama models.
+Users can select models from the dropdown:
+
+- `llama3.1:8b` — quick chat
+- `qwen2.5:14b` — deeper reasoning tasks
+- `qwen2.5-coder:14b` — coding tasks
+- `mistral:7b` — HA testing / structured output
+
+### Consolidated (Minimal) Setup Alternative
+
+If VRAM pressure is a concern or you prefer fewer models:
+
+| Model | Roles | VRAM |
+|---|---|---|
+| `qwen2.5:14b` | Chat + Personal agent + HA agent | ~11 GB |
+| `qwen2.5-coder:14b` | Coding agent | ~11 GB |

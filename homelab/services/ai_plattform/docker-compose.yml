@@ -3,21 +3,44 @@
 #
 # Usage:
 #   docker compose up -d
-#   docker exec ollama ollama pull llama3.1:8b
+#   docker exec ollama ollama pull llama3.1:8b        # Chat
+#   docker exec ollama ollama pull mistral:7b          # Home Assistant agent
+#   docker exec ollama ollama pull qwen2.5:14b         # Personal agent
+#   docker exec ollama ollama pull qwen2.5-coder:14b   # Coding agent
 #
 # Prerequisites:
 #   - NVIDIA Container Toolkit installed
 #   - env/ directory with nc1.env through nc4.env
 #   - GPU passthrough verified: docker run --rm --gpus all nvidia/cuda:12.2.2-runtime-ubuntu22.04 nvidia-smi
+#
+# Shared services:
+#   - Ollama      — LLM inference          (port 11434)
+#   - LocalAI     — Whisper STT / Piper TTS (port 8300)
+#   - Open WebUI  — Chat UI for Ollama      (port 3000)
 
 services:
-  # ═══ SHARED: Ollama LLM ═══
+  # ══════════════════════════════════════════════════════════════════════
+  #  SHARED SERVICES
+  # ══════════════════════════════════════════════════════════════════════
+
+  # ── Ollama LLM ──
+  # Models (pulled after first start):
+  #   llama3.1:8b        — General chat                (~4.7 GB, ~6 GB VRAM)
+  #   mistral:7b         — Home Assistant agent        (~4.1 GB, ~5 GB VRAM)
+  #   qwen2.5:14b        — Personal agent / reasoning  (~9 GB, ~11 GB VRAM)
+  #   qwen2.5-coder:14b  — Coding agent                (~9 GB, ~11 GB VRAM)
+  # VRAM note: P40 has 24 GB. Ollama loads/unloads dynamically.
+  #   Concurrent: 1-2 models + embeddings (~2-3 GB) fit comfortably.
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
     restart: unless-stopped
     ports:
       - "11434:11434"
+    environment:
+      - OLLAMA_KEEP_ALIVE=5m           # unload idle models after 5 min
+      - OLLAMA_NUM_PARALLEL=2           # max 2 concurrent requests per model
+      - OLLAMA_MAX_LOADED_MODELS=2      # max 2 models in VRAM simultaneously
     volumes:
       - ollama_data:/root/.ollama
     deploy:
@@ -28,9 +51,8 @@ services:
               count: all
               capabilities: [gpu]
 
-  # ═══ SHARED: LocalAI (Whisper STT + optional Piper TTS) ═══
+  # ── LocalAI (Whisper STT + optional Piper TTS) ──
   # Provides OpenAI-compatible /v1/audio/transcriptions endpoint
-  # (onerahmet/openai-whisper-asr-webservice uses /asr which is NOT compatible with integration_openai)
   localai:
     image: localai/localai:latest-gpu-nvidia-cuda-12
     container_name: localai
@@ -49,7 +71,26 @@ services:
               count: all
               capabilities: [gpu]
 
-  # ═══ PER-INSTANCE: Context Chat Backend ×4 ═══
+  # ── Open WebUI ──
+  # Web-based chat interface for Ollama models
+  # Access at http://192.168.1.120:3000
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+    ports:
+      - "3000:8080"
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - WEBUI_AUTH=true
+    volumes:
+      - open_webui_data:/app/backend/data
+    depends_on:
+      - ollama
+
+  # ══════════════════════════════════════════════════════════════════════
+  #  PER-INSTANCE: Context Chat Backend ×4
+  # ══════════════════════════════════════════════════════════════════════
   # Each container runs 3 processes via supervisord:
   #   1. main.py       — FastAPI app on APP_PORT
   #   2. main_em.py    — Embedding server on internal :5000
@@ -129,6 +170,7 @@ services:
 volumes:
   ollama_data:
   localai_models:
+  open_webui_data:
   ccb_nc1_data:
   ccb_nc2_data:
   ccb_nc3_data:

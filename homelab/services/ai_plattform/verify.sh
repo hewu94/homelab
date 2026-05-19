@@ -41,7 +41,7 @@ echo ""
 echo "1. Docker Containers"
 echo "─────────────────────"
 
-EXPECTED_CONTAINERS=("ollama" "localai" "nc_app_context_chat_backend_nc1" "nc_app_context_chat_backend_nc2" "nc_app_context_chat_backend_nc3" "nc_app_context_chat_backend_nc4")
+EXPECTED_CONTAINERS=("ollama" "localai" "open-webui" "nc_app_context_chat_backend_nc1" "nc_app_context_chat_backend_nc2" "nc_app_context_chat_backend_nc3" "nc_app_context_chat_backend_nc4")
 
 for c in "${EXPECTED_CONTAINERS[@]}"; do
   STATUS=$(docker inspect --format='{{.State.Status}}' "$c" 2>/dev/null) || STATUS="not found"
@@ -61,11 +61,25 @@ echo "─────────────────────"
 check "Ollama API" "http://$HOST:11434/api/tags"
 
 MODEL_COUNT=$(curl -s "http://$HOST:11434/api/tags" 2>/dev/null | grep -c '"name"' || echo 0)
-if [[ "$MODEL_COUNT" -gt 0 ]]; then
+EXPECTED_MODELS=("llama3.1:8b" "mistral" "qwen2.5:14b" "qwen2.5-coder")
+if [[ "$MODEL_COUNT" -ge ${#EXPECTED_MODELS[@]} ]]; then
   echo "  ✓ Models loaded: $MODEL_COUNT"
   curl -s "http://$HOST:11434/api/tags" 2>/dev/null | grep '"name"' | sed 's/.*"name":"\([^"]*\)".*/    → \1/'
+elif [[ "$MODEL_COUNT" -gt 0 ]]; then
+  echo "  ⚠ Only $MODEL_COUNT model(s) found (expected ${#EXPECTED_MODELS[@]})"
+  curl -s "http://$HOST:11434/api/tags" 2>/dev/null | grep '"name"' | sed 's/.*"name":"\([^"]*\)".*/    → \1/'
+  echo "  Missing models? Run:"
+  echo "    docker exec ollama ollama pull llama3.1:8b"
+  echo "    docker exec ollama ollama pull mistral:7b"
+  echo "    docker exec ollama ollama pull qwen2.5:14b"
+  echo "    docker exec ollama ollama pull qwen2.5-coder:14b"
+  ((WARN++))
 else
-  echo "  ⚠ No models pulled yet! Run: docker exec ollama ollama pull llama3.1:8b"
+  echo "  ⚠ No models pulled yet! Run:"
+  echo "    docker exec ollama ollama pull llama3.1:8b"
+  echo "    docker exec ollama ollama pull mistral:7b"
+  echo "    docker exec ollama ollama pull qwen2.5:14b"
+  echo "    docker exec ollama ollama pull qwen2.5-coder:14b"
   ((WARN++))
 fi
 
@@ -105,7 +119,7 @@ echo ""
 echo "6. Port Accessibility (from GPU VM)"
 echo "─────────────────────"
 
-for PORT in 11434 8300 10034 10035 10036 10037; do
+for PORT in 11434 3000 8300 10034 10035 10036 10037; do
   if ss -tln 2>/dev/null | grep -q ":$PORT " || netstat -tln 2>/dev/null | grep -q ":$PORT "; then
     echo "  ✓ Port $PORT — listening"
     ((PASS++))

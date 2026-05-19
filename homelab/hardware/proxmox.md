@@ -109,12 +109,9 @@ Last scrub: 2026-03-08 — 0 errors
 
 ## GPU
 
-- **NVIDIA GeForce GTX 1070** (8 GiB VRAM)
-- Driver: 580.126.20, CUDA: 13.0
+- **NVIDIA Tesla P40** (24 GiB GDDR5X VRAM)
 - PCI passthrough to aiplatform (VM 120)
-- Persistence mode: on
-- Power: 12W idle / 151W cap
-- Host crontab has `@reboot nvidia-smi -pm 1 && nvidia-smi -pl 250` — likely stale (GPU not visible to host)
+- TDP: 250W
 
 ## Backup Jobs
 

@@ -9,8 +9,8 @@ set -euo pipefail
 PUID=1000
 PGID=1000
 NFS_SERVER="192.168.1.198"
-NFS_EXPORT="/export/media"
-NFS_MOUNT="/media"
+NFS_EXPORT="/mediastack"        # NFSv4 pseudo-root is /export, so client path strips it
+NFS_MOUNT="/mnt/mediastack"
 CONFIG_DIR="/opt/mediastack"
 
 echo "=== 1/5 Install NFS client ==="
@@ -36,9 +36,13 @@ else
 fi
 
 echo "=== 3/5 Create media directory structure on NFS ==="
-mkdir -p "$NFS_MOUNT"/{movies,tv,downloads/{complete,incomplete}}
-chown -R "${PUID}:${PGID}" "$NFS_MOUNT"/{movies,tv,downloads}
-echo "  Created: movies/, tv/, downloads/{complete,incomplete}"
+# TRaSH-guides layout: media/ for libraries, downloads/ for clients
+# Sonarr/Radarr mount the whole tree as /data so hardlinks work across
+# downloads/ → media/ (same filesystem). Plex only sees media/.
+mkdir -p "$NFS_MOUNT"/media/{movies,tv}
+mkdir -p "$NFS_MOUNT"/downloads/{complete,incomplete}
+chown -R "${PUID}:${PGID}" "$NFS_MOUNT"/{media,downloads}
+echo "  Created: media/{movies,tv}, downloads/{complete,incomplete}"
 
 echo "=== 4/5 Create config directories ==="
 mkdir -p "$CONFIG_DIR"
